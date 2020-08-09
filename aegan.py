@@ -53,10 +53,10 @@ class Generator(nn.Module):
     def _init_modules(self):
         """Initialize the modules."""
         projection_widths = [8, 8, 8, 8, 8, 8, 8]
-        self.projection_dim = sum(projection_widths) + self.latent_dim
+        self.projection_dim = sum(projection_widths) + self.latent_dim // 2
         self.leaky_relu = nn.LeakyReLU()
         self.projections = nn.ModuleList()  # (64,)
-        running_sum = self.latent_dim
+        running_sum = self.latent_dim // 2
         for i in projection_widths:
             self.projections.append(
                 nn.Sequential(
@@ -72,9 +72,9 @@ class Generator(nn.Module):
             running_sum += i
         self.projection_upscaler = nn.Upsample(scale_factor=3)
 
-        self.colourspace_r = self.build_colourspace(self.projection_dim, 16)  # (16,)
-        self.colourspace_g = self.build_colourspace(self.projection_dim, 16)  # (16,)
-        self.colourspace_b = self.build_colourspace(self.projection_dim, 16)  # (16,)
+        self.colourspace_r = self.build_colourspace(self.latent_dim // 2, 16)  # (16,)
+        self.colourspace_g = self.build_colourspace(self.latent_dim // 2, 16)  # (16,)
+        self.colourspace_b = self.build_colourspace(self.latent_dim // 2, 16)  # (16,)
         self.colourspace_upscaler = nn.Upsample(scale_factor=96)
 
         self.seed = nn.Sequential(
@@ -180,7 +180,9 @@ class Generator(nn.Module):
 
     def forward(self, input_tensor):
         """Forward pass; map latent vectors to samples."""
-        last = input_tensor
+        shape_latent_vec = input_tensor[:, :self.latent_dim//2]
+        colour_latent_vec = input_tensor[:, self.latent_dim//2:]
+        last = shape_latent_vec
         for module in self.projections:
             projection = module(last)
             last = torch.cat((last, projection), -1)
@@ -200,19 +202,19 @@ class Generator(nn.Module):
             intermediate = conv(intermediate)
             projection_2d = upscaling(projection_2d)
 
-        r_space = self.colourspace_r(projection)
+        r_space = self.colourspace_r(colour_latent_vec)
         r_space = r_space.view((-1, 16, 1, 1))
         r_space = self.colourspace_upscaler(r_space)
         r_space = intermediate * r_space
         r_space = torch.sum(r_space, dim=1, keepdim=True)
 
-        g_space = self.colourspace_g(projection)
+        g_space = self.colourspace_g(colour_latent_vec)
         g_space = g_space.view((-1, 16, 1, 1))
         g_space = self.colourspace_upscaler(g_space)
         g_space = intermediate * g_space
         g_space = torch.sum(g_space, dim=1, keepdim=True)
 
-        b_space = self.colourspace_b(projection)
+        b_space = self.colourspace_b(colour_latent_vec)
         b_space = b_space.view((-1, 16, 1, 1))
         b_space = self.colourspace_upscaler(b_space)
         b_space = intermediate * b_space
@@ -425,7 +427,7 @@ class DiscriminatorLatent(nn.Module):
                 )
 
         self.classifier = nn.ModuleList()
-        self.classifier.append(nn.Linear(64, 1))
+        self.classifier.append(nn.Linear(7*8 + self.latent_dim, 1))
         self.classifier.append(nn.Sigmoid())
 
     def forward(self, input_tensor):
@@ -779,7 +781,7 @@ def main():
 
     root = os.path.join("data")
     batch_size = 32
-    latent_dim = 8
+    latent_dim = 16
     epochs = 5000
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     transform = tv.transforms.Compose([
