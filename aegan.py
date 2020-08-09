@@ -52,30 +52,34 @@ class Generator(nn.Module):
 
     def _init_modules(self):
         """Initialize the modules."""
+        projection_widths = [8, 8, 8, 8, 8, 8, 8]
+        self.projection_dim = sum(projection_widths) + self.latent_dim
         self.leaky_relu = nn.LeakyReLU()
         self.projections = nn.ModuleList()  # (64,)
-        for i in range(7):
+        running_sum = self.latent_dim
+        for i in projection_widths:
             self.projections.append(
                 nn.Sequential(
                     nn.Linear(
-                        self.latent_dim + 8*i,
-                        8,
+                        running_sum,
+                        i,
                         bias=True,
                         ),
                     nn.BatchNorm1d(8),
                     nn.LeakyReLU(),
                     )
                 )
+            running_sum += i
         self.projection_upscaler = nn.Upsample(scale_factor=3)
 
-        self.colourspace_r = self.build_colourspace(64, 16)  # (16,)
-        self.colourspace_g = self.build_colourspace(64, 16)  # (16,)
-        self.colourspace_b = self.build_colourspace(64, 16)  # (16,)
+        self.colourspace_r = self.build_colourspace(self.projection_dim, 16)  # (16,)
+        self.colourspace_g = self.build_colourspace(self.projection_dim, 16)  # (16,)
+        self.colourspace_b = self.build_colourspace(self.projection_dim, 16)  # (16,)
         self.colourspace_upscaler = nn.Upsample(scale_factor=96)
 
         self.seed = nn.Sequential(
                 nn.Linear(
-                    64,
+                    self.projection_dim,
                     512*3*3,
                     bias=True),
                 nn.BatchNorm1d(512*3*3),
@@ -104,7 +108,7 @@ class Generator(nn.Module):
         self.conv.append(nn.Sequential(
                 nn.ZeroPad2d((1, 2, 1, 2)),
                 nn.Conv2d(
-                        in_channels=(512 + 64)//4,
+                        in_channels=(512 + self.projection_dim)//4,
                         out_channels=256,
                         kernel_size=4,
                         stride=1,
@@ -119,7 +123,7 @@ class Generator(nn.Module):
         self.conv.append(nn.Sequential(
                 nn.ZeroPad2d((1, 2, 1, 2)),
                 nn.Conv2d(
-                        in_channels=(256 + 64)//4,
+                        in_channels=(256 + self.projection_dim)//4,
                         out_channels=256,
                         kernel_size=4,
                         stride=1,
@@ -134,7 +138,7 @@ class Generator(nn.Module):
         self.conv.append(nn.Sequential(
                 nn.ZeroPad2d((1, 2, 1, 2)),
                 nn.Conv2d(
-                        in_channels=(256 + 64)//4,
+                        in_channels=(256 + self.projection_dim)//4,
                         out_channels=256,
                         kernel_size=4,
                         stride=1,
@@ -149,7 +153,7 @@ class Generator(nn.Module):
         self.conv.append(nn.Sequential(
                 nn.ZeroPad2d((1, 2, 1, 2)),
                 nn.Conv2d(
-                        in_channels=(256 + 64)//4,
+                        in_channels=(256 + self.projection_dim)//4,
                         out_channels=64,
                         kernel_size=4,
                         stride=1,
@@ -164,7 +168,7 @@ class Generator(nn.Module):
         self.conv.append(nn.Sequential(
                 nn.ZeroPad2d((2, 2, 2, 2)),
                 nn.Conv2d(
-                        in_channels=(64 + 64),
+                        in_channels=64,
                         out_channels=16,
                         kernel_size=5,
                         stride=1,
@@ -185,13 +189,13 @@ class Generator(nn.Module):
         intermediate = self.seed(projection)
         intermediate = intermediate.view((-1, 512, 3, 3))
 
-        projection_2d = projection.view((-1, 64, 1, 1))
+        projection_2d = projection.view((-1, self.projection_dim, 1, 1))
         projection_2d = self.projection_upscaler(projection_2d)
 
         for i, (conv, upscaling) in enumerate(zip(self.conv, self.upscaling)):
-            if i > 0:
-                intermediate = torch.cat((intermediate, projection_2d), 1)
             if i + 1 != len(self.upscaling):
+                if i > 0:
+                    intermediate = torch.cat((intermediate, projection_2d), 1)
                 intermediate = torch.nn.functional.pixel_shuffle(intermediate, 2)
             intermediate = conv(intermediate)
             projection_2d = upscaling(projection_2d)
@@ -231,24 +235,75 @@ class Encoder(nn.Module):
         """Initialize the modules."""
         down_channels = [3, 64, 128, 256, 512]
         self.down = nn.ModuleList()
-        leaky_relu = nn.LeakyReLU()
-        for i in range(4):
+        for i in range(len(down_channels)-1):
             self.down.append(
+                nn.Sequential(
+                    nn.Conv2d(
+                        in_channels=down_channels[i],
+                        out_channels=down_channels[i+1],
+                        kernel_size=3,
+                        stride=2,
+                        padding=1,
+                        bias=True,
+                        ),
+                    nn.BatchNorm2d(down_channels[i+1]),
+                    nn.LeakyReLU(),
+                    )
+                )
+
+        self.reducer = nn.Sequential(
+            nn.Conv2d(
+                in_channels=down_channels[-1],
+                out_channels=down_channels[-2],
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=True,
+                ),
+                nn.BatchNorm2d(down_channels[-2]),
+                nn.LeakyReLU(),
+                nn.Upsample(scale_factor=2)
+            )
+
+        up_channels = [256, 128, 64, 64, 64]
+        scale_factors = [2, 2, 2, 1]
+        self.up = nn.ModuleList()
+        for i in range(len(up_channels)-1):
+            self.up.append(
+                nn.Sequential(
+                    nn.Conv2d(
+                        in_channels=up_channels[i] + down_channels[-2-i],
+                        out_channels=up_channels[i+1],
+                        kernel_size=3,
+                        stride=1,
+                        padding=1,
+                        bias=True,
+                        ),
+                    nn.BatchNorm2d(up_channels[i+1]),
+                    nn.LeakyReLU(),
+                    nn.Upsample(scale_factor=scale_factors[i]),
+                    )
+                )
+
+        down_again_channels = [64, 64, 64, 64, 64]
+        self.down_again = nn.ModuleList()
+        for i in range(len(down_again_channels)-1):
+            self.down_again.append(
                 nn.Conv2d(
-                    in_channels=down_channels[i],
-                    out_channels=down_channels[i+1],
+                    in_channels=down_again_channels[i],
+                    out_channels=down_again_channels[i+1],
                     kernel_size=3,
                     stride=2,
                     padding=1,
                     bias=True,
                     )
                 )
-            self.down.append(nn.BatchNorm2d(down_channels[i+1]))
-            self.down.append(leaky_relu)
+            self.down_again.append(nn.BatchNorm2d(down_again_channels[i+1]))
+            self.down_again.append(nn.LeakyReLU())
 
         self.projection = nn.Sequential(
             nn.Linear(
-                512*6*6,
+                512*6*6 + 64*6*6,
                 256,
                 bias=True,
                 ),
@@ -273,15 +328,31 @@ class Encoder(nn.Module):
     def forward(self, input_tensor):
         """Forward pass; map latent vectors to samples."""
         rv = torch.randn(input_tensor.size(), device=self.device) * 0.02
-        intermediate = input_tensor + rv
+        augmented_input = input_tensor + rv
+        intermediate = augmented_input
+        intermediates = [augmented_input]
         for module in self.down:
             intermediate = module(intermediate)
+            intermediates.append(intermediate)
+        intermediates = intermediates[:-1][::-1]
 
-        intermediate = intermediate.view(-1, 6*6*512)
+        down = intermediate.view(-1, 6*6*512)
 
-        intermediate = self.projection(intermediate)
+        intermediate = self.reducer(intermediate)
 
-        return intermediate
+        for index, module in enumerate(self.up):
+            intermediate = torch.cat((intermediate, intermediates[index]), 1)
+            intermediate = module(intermediate)
+
+        for module in self.down_again:
+            intermediate = module(intermediate)
+
+        intermediate = intermediate.view(-1, 6*6*64)
+        intermediate = torch.cat((down, intermediate), -1)
+
+        projected = self.projection(intermediate)
+
+        return projected
 
 
 class DiscriminatorImage(nn.Module):
@@ -603,7 +674,7 @@ class AEGAN():
         Z_recon_loss = self.criterion_recon_latent(Z_tilde, Z) * self.alphas["reconstruct_latent"]
 
         X_loss = (X_hat_loss + X_tilde_loss) / 2 * self.alphas["discriminate_image"]
-        Z_loss = (X_hat_loss + X_tilde_loss) / 2 * self.alphas["discriminate_latent"]
+        Z_loss = (Z_hat_loss + Z_tilde_loss) / 2 * self.alphas["discriminate_latent"]
         loss = X_loss + Z_loss + X_recon_loss + Z_recon_loss
         loss.backward()
         self.optim_e.step()
