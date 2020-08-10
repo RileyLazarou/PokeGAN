@@ -358,49 +358,120 @@ class Encoder(nn.Module):
 
 
 class DiscriminatorImage(nn.Module):
-    def __init__(self, device="cpu"):
+    def __init__(self, device="cpu", latent_dim=8):
         """A discriminator for discerning real from generated images."""
         super(DiscriminatorImage, self).__init__()
         self.device = device
+        self.latent_dim = latent_dim
         self._init_modules()
 
     def _init_modules(self):
         """Initialize the modules."""
         down_channels = [3, 64, 128, 256, 512]
         self.down = nn.ModuleList()
-        leaky_relu = nn.LeakyReLU()
-        for i in range(4):
+        for i in range(len(down_channels)-1):
             self.down.append(
+                nn.Sequential(
+                    nn.Conv2d(
+                        in_channels=down_channels[i],
+                        out_channels=down_channels[i+1],
+                        kernel_size=3,
+                        stride=2,
+                        padding=1,
+                        bias=True,
+                        ),
+                    nn.BatchNorm2d(down_channels[i+1]),
+                    nn.LeakyReLU(),
+                    )
+                )
+
+        self.reducer = nn.Sequential(
+            nn.Conv2d(
+                in_channels=down_channels[-1],
+                out_channels=down_channels[-2],
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=True,
+                ),
+                nn.BatchNorm2d(down_channels[-2]),
+                nn.LeakyReLU(),
+                nn.Upsample(scale_factor=2)
+            )
+
+        up_channels = [256, 128, 64, 64, 64]
+        scale_factors = [2, 2, 2, 1]
+        self.up = nn.ModuleList()
+        for i in range(len(up_channels)-1):
+            self.up.append(
+                nn.Sequential(
+                    nn.Conv2d(
+                        in_channels=up_channels[i] + down_channels[-2-i],
+                        out_channels=up_channels[i+1],
+                        kernel_size=3,
+                        stride=1,
+                        padding=1,
+                        bias=True,
+                        ),
+                    nn.BatchNorm2d(up_channels[i+1]),
+                    nn.LeakyReLU(),
+                    nn.Upsample(scale_factor=scale_factors[i]),
+                    )
+                )
+
+        down_again_channels = [64, 64, 64, 64, 64]
+        self.down_again = nn.ModuleList()
+        for i in range(len(down_again_channels)-1):
+            self.down_again.append(
                 nn.Conv2d(
-                    in_channels=down_channels[i],
-                    out_channels=down_channels[i+1],
+                    in_channels=down_again_channels[i],
+                    out_channels=down_again_channels[i+1],
                     kernel_size=3,
                     stride=2,
                     padding=1,
                     bias=True,
                     )
                 )
-            self.down.append(nn.BatchNorm2d(down_channels[i+1]))
-            self.down.append(leaky_relu)
+            self.down_again.append(nn.BatchNorm2d(down_again_channels[i+1]))
+            self.down_again.append(nn.LeakyReLU())
 
-        self.classifier = nn.ModuleList()
-        self.width = down_channels[-1] * 6**2
-        self.classifier.append(nn.Linear(self.width, 1))
-        self.classifier.append(nn.Sigmoid())
+        self.classifier = nn.Sequential(
+            nn.Linear(
+                512*6*6 + 64*6*6,
+                1,
+                bias=True,
+                ),
+            nn.Sigmoid(),
+            )
 
     def forward(self, input_tensor):
         """Forward pass; map latent vectors to samples."""
         rv = torch.randn(input_tensor.size(), device=self.device) * 0.02
-        intermediate = input_tensor + rv
+        augmented_input = input_tensor + rv
+        intermediate = augmented_input
+        intermediates = [augmented_input]
         for module in self.down:
             intermediate = module(intermediate)
+            intermediates.append(intermediate)
+        intermediates = intermediates[:-1][::-1]
 
-        intermediate = intermediate.view(-1, self.width)
+        down = intermediate.view(-1, 6*6*512)
 
-        for module in self.classifier:
+        intermediate = self.reducer(intermediate)
+
+        for index, module in enumerate(self.up):
+            intermediate = torch.cat((intermediate, intermediates[index]), 1)
             intermediate = module(intermediate)
 
-        return intermediate
+        for module in self.down_again:
+            intermediate = module(intermediate)
+
+        intermediate = intermediate.view(-1, 6*6*64)
+        intermediate = torch.cat((down, intermediate), -1)
+
+        confidence = self.classifier(intermediate)
+
+        return confidence
 
 
 class DiscriminatorLatent(nn.Module):
@@ -781,7 +852,7 @@ def main():
 
     root = os.path.join("data")
     batch_size = 32
-    latent_dim = 16
+    latent_dim = 24
     epochs = 5000
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     transform = tv.transforms.Compose([
