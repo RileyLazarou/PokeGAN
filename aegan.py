@@ -358,120 +358,51 @@ class Encoder(nn.Module):
 
 
 class DiscriminatorImage(nn.Module):
-    def __init__(self, device="cpu", latent_dim=8):
+    def __init__(self, device="cpu"):
         """A discriminator for discerning real from generated images."""
         super(DiscriminatorImage, self).__init__()
         self.device = device
-        self.latent_dim = latent_dim
         self._init_modules()
 
     def _init_modules(self):
         """Initialize the modules."""
         down_channels = [3, 64, 128, 256, 512]
         self.down = nn.ModuleList()
-        for i in range(len(down_channels)-1):
+        leaky_relu = nn.LeakyReLU()
+        for i in range(4):
             self.down.append(
-                nn.Sequential(
-                    nn.Conv2d(
-                        in_channels=down_channels[i],
-                        out_channels=down_channels[i+1],
-                        kernel_size=3,
-                        stride=2,
-                        padding=1,
-                        bias=True,
-                        ),
-                    nn.BatchNorm2d(down_channels[i+1]),
-                    nn.LeakyReLU(),
-                    )
-                )
-
-        self.reducer = nn.Sequential(
-            nn.Conv2d(
-                in_channels=down_channels[-1],
-                out_channels=down_channels[-2],
-                kernel_size=3,
-                stride=1,
-                padding=1,
-                bias=True,
-                ),
-                nn.BatchNorm2d(down_channels[-2]),
-                nn.LeakyReLU(),
-                nn.Upsample(scale_factor=2)
-            )
-
-        up_channels = [256, 128, 64, 64, 64]
-        scale_factors = [2, 2, 2, 1]
-        self.up = nn.ModuleList()
-        for i in range(len(up_channels)-1):
-            self.up.append(
-                nn.Sequential(
-                    nn.Conv2d(
-                        in_channels=up_channels[i] + down_channels[-2-i],
-                        out_channels=up_channels[i+1],
-                        kernel_size=3,
-                        stride=1,
-                        padding=1,
-                        bias=True,
-                        ),
-                    nn.BatchNorm2d(up_channels[i+1]),
-                    nn.LeakyReLU(),
-                    nn.Upsample(scale_factor=scale_factors[i]),
-                    )
-                )
-
-        down_again_channels = [64, 64, 64, 64, 64]
-        self.down_again = nn.ModuleList()
-        for i in range(len(down_again_channels)-1):
-            self.down_again.append(
                 nn.Conv2d(
-                    in_channels=down_again_channels[i],
-                    out_channels=down_again_channels[i+1],
+                    in_channels=down_channels[i],
+                    out_channels=down_channels[i+1],
                     kernel_size=3,
                     stride=2,
                     padding=1,
                     bias=True,
                     )
                 )
-            self.down_again.append(nn.BatchNorm2d(down_again_channels[i+1]))
-            self.down_again.append(nn.LeakyReLU())
+            self.down.append(nn.BatchNorm2d(down_channels[i+1]))
+            self.down.append(leaky_relu)
 
-        self.classifier = nn.Sequential(
-            nn.Linear(
-                512*6*6 + 64*6*6,
-                1,
-                bias=True,
-                ),
-            nn.Sigmoid(),
-            )
+        self.classifier = nn.ModuleList()
+        self.width = down_channels[-1] * 6**2
+        self.classifier.append(nn.Linear(self.width, 1))
+        self.classifier.append(nn.Sigmoid())
 
     def forward(self, input_tensor):
         """Forward pass; map latent vectors to samples."""
         rv = torch.randn(input_tensor.size(), device=self.device) * 0.02
-        augmented_input = input_tensor + rv
-        intermediate = augmented_input
-        intermediates = [augmented_input]
+        intermediate = input_tensor + rv
         for module in self.down:
             intermediate = module(intermediate)
-            intermediates.append(intermediate)
-        intermediates = intermediates[:-1][::-1]
+            rv = torch.randn(intermediate.size(), device=self.device) * 0.02 + 1
+            intermediate += rv
 
-        down = intermediate.view(-1, 6*6*512)
+        intermediate = intermediate.view(-1, self.width)
 
-        intermediate = self.reducer(intermediate)
-
-        for index, module in enumerate(self.up):
-            intermediate = torch.cat((intermediate, intermediates[index]), 1)
+        for module in self.classifier:
             intermediate = module(intermediate)
 
-        for module in self.down_again:
-            intermediate = module(intermediate)
-
-        intermediate = intermediate.view(-1, 6*6*64)
-        intermediate = torch.cat((down, intermediate), -1)
-
-        confidence = self.classifier(intermediate)
-
-        return confidence
+        return intermediate
 
 
 class DiscriminatorLatent(nn.Module):
@@ -687,16 +618,16 @@ class AEGAN():
         self.criterion_recon_latent = nn.MSELoss()
         self.optim_di = optim.Adam(self.discriminator_image.parameters(),
                                    lr=2e-4, betas=(0.5, 0.999),
-                                   weight_decay=1e-6)
+                                   weight_decay=1e-5)
         self.optim_dl = optim.Adam(self.discriminator_latent.parameters(),
                                    lr=2e-4, betas=(0.5, 0.999),
-                                   weight_decay=1e-6)
+                                   weight_decay=1e-5)
         self.optim_g = optim.Adam(self.generator.parameters(),
                                   lr=2e-4, betas=(0.5, 0.999),
-                                  weight_decay=1e-6)
+                                  weight_decay=1e-5)
         self.optim_e = optim.Adam(self.encoder.parameters(),
                                   lr=2e-4, betas=(0.5, 0.999),
-                                  weight_decay=1e-6)
+                                  weight_decay=1e-5)
         self.target_ones = torch.ones((batch_size, 1), device=device)
         self.target_zeros = torch.zeros((batch_size, 1), device=device)
 
