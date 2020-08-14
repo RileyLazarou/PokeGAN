@@ -11,6 +11,8 @@ from torch.utils.data import DataLoader
 from PIL import Image
 import numpy as np
 
+EPS = 1e-6
+
 class Generator(nn.Module):
     def __init__(self, latent_dim=8):
         """A generator for mapping a latent space to a sample space.
@@ -606,10 +608,10 @@ class AEGAN():
         self.batch_size = batch_size
 
         self.alphas = {
-            "reconstruct_image": 10,
-            "reconstruct_latent": 10,
-            "discriminate_image": 1,
-            "discriminate_latent": 1,
+            "reconstruct_image": 1,
+            "reconstruct_latent": 0.5,
+            "discriminate_image": 0.01,
+            "discriminate_latent": 0.01,
         }
 
         self.criterion_gen = nn.BCELoss()
@@ -680,6 +682,7 @@ class AEGAN():
         X_loss = (X_hat_loss + X_tilde_loss) / 2 * self.alphas["discriminate_image"]
         Z_loss = (Z_hat_loss + Z_tilde_loss) / 2 * self.alphas["discriminate_latent"]
         loss = X_loss + Z_loss + X_recon_loss + Z_recon_loss
+
         loss.backward()
         self.optim_e.step()
         self.optim_g.step()
@@ -716,6 +719,7 @@ class AEGAN():
         loss_images = (X_loss + X_hat_loss + X_tilde_loss) / 4
         loss_latent = (Z_loss + Z_hat_loss + Z_tilde_loss) / 4
         loss = loss_images + loss_latent
+
         loss.backward()
         self.optim_di.step()
         self.optim_dl.step()
@@ -783,7 +787,7 @@ def main():
 
     root = os.path.join("data")
     batch_size = 32
-    latent_dim = 8
+    latent_dim = 16
     epochs = 5000
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     transform = tv.transforms.Compose([
