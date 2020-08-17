@@ -608,8 +608,8 @@ class AEGAN():
         self.batch_size = batch_size
 
         self.alphas = {
-            "reconstruct_image": 1,
-            "reconstruct_latent": 0.5,
+            "reconstruct_image": 0.1,
+            "reconstruct_latent": 0.1,
             "discriminate_image": 0.01,
             "discriminate_latent": 0.01,
         }
@@ -787,11 +787,11 @@ def main():
 
     root = os.path.join("data")
     batch_size = 32
-    latent_dim = 16
+    latent_dim = 32
     epochs = 5000
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     transform = tv.transforms.Compose([
-            tv.transforms.RandomAffine(0, translate=(5/96, 5/96), fillcolor=(255,255,255)),
+            #tv.transforms.RandomAffine(0, translate=(5/96, 5/96), fillcolor=(255,255,255)),
             tv.transforms.ColorJitter(hue=0.5),
             tv.transforms.RandomHorizontalFlip(p=0.5),
             tv.transforms.ToTensor(),
