@@ -397,7 +397,7 @@ class DiscriminatorImage(nn.Module):
         for module in self.down:
             intermediate = module(intermediate)
             rv = torch.randn(intermediate.size(), device=self.device) * 0.02 + 1
-            intermediate += rv
+            intermediate *= rv
 
         intermediate = intermediate.view(-1, self.width)
 
