@@ -227,7 +227,7 @@ class Generator(nn.Module):
 
 class Encoder(nn.Module):
     def __init__(self, device="cpu", latent_dim=8):
-        """A discriminator for discerning real from generated images."""
+        """An Encoder for encoding images as latent vectors."""
         super(Encoder, self).__init__()
         self.device = device
         self.latent_dim = latent_dim
@@ -408,10 +408,11 @@ class DiscriminatorImage(nn.Module):
 
 
 class DiscriminatorLatent(nn.Module):
-    def __init__(self, latent_dim=8,):
+    def __init__(self, latent_dim=8, device="cpu"):
         """A discriminator for discerning real from generated images."""
         super(DiscriminatorLatent, self).__init__()
         self.latent_dim = latent_dim
+        self.device = device
         self._init_modules()
 
     def _init_modules(self):
@@ -439,6 +440,8 @@ class DiscriminatorLatent(nn.Module):
         last = input_tensor
         for module in self.pyramid:
             projection = module(last)
+            rv = torch.randn(projection.size(), device=self.device) * 0.02 + 1
+            projection *= rv
             last = torch.cat((last, projection), -1)
         for module in self.classifier:
             last = module(last)
@@ -601,6 +604,7 @@ class AEGAN():
         self.discriminator_image = DiscriminatorImage(device=self.device).to(device)
         self.discriminator_latent = DiscriminatorLatent(
             latent_dim=self.latent_dim,
+            device=self.device,
             ).to(self.device)
 
         self.noise_fn = noise_fn
