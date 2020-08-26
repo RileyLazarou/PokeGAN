@@ -594,19 +594,7 @@ class AEGAN():
         """
         self.latent_dim = latent_dim
         self.device = device
-
-        self.generator = Generator(latent_dim=self.latent_dim)
-        if gen_path:
-            self.generator.load_state_dict(torch.load(gen_path))
-        self.generator = self.generator.to(self.device)
-        self.encoder = Encoder(latent_dim=self.latent_dim, device=self.device)
-        self.encoder = self.encoder.to(self.device)
-        self.discriminator_image = DiscriminatorImage(device=self.device).to(device)
-        self.discriminator_latent = DiscriminatorLatent(
-            latent_dim=self.latent_dim,
-            device=self.device,
-            ).to(self.device)
-
+        self.gen_path = gen_path
         self.noise_fn = noise_fn
         self.dataloader = dataloader
         self.batch_size = batch_size
@@ -617,25 +605,52 @@ class AEGAN():
             "discriminate_image": 0.01,
             "discriminate_latent": 0.01,
         }
-
         self.criterion_gen = nn.BCELoss()
         self.criterion_recon_image = nn.L1Loss()
         #self.criterion_recon_image = nn.MSELoss()
         self.criterion_recon_latent = nn.MSELoss()
-        self.optim_di = optim.Adam(self.discriminator_image.parameters(),
-                                   lr=2e-4, betas=(0.5, 0.999),
-                                   weight_decay=1e-6)
-        self.optim_dl = optim.Adam(self.discriminator_latent.parameters(),
-                                   lr=2e-4, betas=(0.5, 0.999),
-                                   weight_decay=1e-6)
+        self.target_ones = torch.ones((batch_size, 1), device=device)
+        self.target_zeros = torch.zeros((batch_size, 1), device=device)
+        self._init_generator()
+        self._init_encoder()
+        self._init_dx()
+        self._init_dz()
+
+    def _init_generator(self):
+        self.generator = Generator(latent_dim=self.latent_dim)
+        if self.gen_path:
+            self.generator.load_state_dict(torch.load(self.gen_path))
+        self.generator = self.generator.to(self.device)
         self.optim_g = optim.Adam(self.generator.parameters(),
                                   lr=2e-4, betas=(0.5, 0.999),
                                   weight_decay=1e-6)
+
+    def _init_encoder(self):
+        self.encoder = Encoder(latent_dim=self.latent_dim, device=self.device)
+        self.encoder = self.encoder.to(self.device)
         self.optim_e = optim.Adam(self.encoder.parameters(),
                                   lr=2e-4, betas=(0.5, 0.999),
                                   weight_decay=1e-6)
-        self.target_ones = torch.ones((batch_size, 1), device=device)
-        self.target_zeros = torch.zeros((batch_size, 1), device=device)
+
+    def _init_dx(self):
+        self.discriminator_image = DiscriminatorImage(device=self.device).to(self.device)
+        self.optim_di = optim.Adam(self.discriminator_image.parameters(),
+                                   lr=2e-4, betas=(0.5, 0.999),
+                                   weight_decay=1e-6)
+
+    def _init_dz(self):
+        self.discriminator_latent = DiscriminatorLatent(
+            latent_dim=self.latent_dim,
+            device=self.device,
+            ).to(self.device)
+        self.optim_dl = optim.Adam(self.discriminator_latent.parameters(),
+                                   lr=2e-4, betas=(0.5, 0.999),
+                                   weight_decay=1e-6)
+
+
+
+
+
 
     def generate_samples(self, latent_vec=None, num=None):
         """Sample images from the generator.
@@ -840,6 +855,10 @@ def main():
         if (i + 1) % 50 == 0:
             torch.save(gan.generator.state_dict(), f"results/checkpoints/check.{i:05d}.pt")
         save_images(gan, test_noise, f"results/generated/gen.{i:04d}.png")
+        if (i+1) % 1000 == 0:
+            gan._init_encoder()
+            gan._init_dx()
+            gan._init_dz()
 
         if not "encoder" in dir(gan):
             continue
