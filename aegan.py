@@ -1,6 +1,7 @@
 import os
 import json
 import sys
+import time
 
 import torch
 from torch import nn
@@ -799,7 +800,6 @@ def save_images(GAN, vec, filename):
 
 def main():
     import matplotlib.pyplot as plt
-    from time import time
     os.makedirs("results/generated", exist_ok=True)
     os.makedirs("results/reconstructed", exist_ok=True)
     os.makedirs("results/checkpoints", exist_ok=True)
@@ -848,17 +848,29 @@ def main():
         batch_size=batch_size,
         gen_path=gen_path,
         )
-    start = time()
+    start = time.time()
     for i in range(epochs):
-        print(f"Epoch {i+1}; Elapsed time = {int(time() - start)}s")
+        while True:
+            try:
+                with open("pause.json") as f:
+                    pause = json.load(f)
+                if pause['pause'] == 0:
+                    break
+                print(f"Pausing for {pause['pause']} seconds")
+                time.sleep(pause["pause"])
+            except (KeyError, json.decoder.JSONDecodeError, FileNotFoundError):
+                break
+        elapsed = int(time.time() - start)
+        elapsed = f"{elapsed // 3600:02d}:{(elapsed % 3600) // 60:02d}:{elapsed % 60:02d}"
+        print(f"Epoch {i+1}; Elapsed time = {elapsed}s")
         gan.train_epoch(max_steps=100)
         if (i + 1) % 50 == 0:
             torch.save(gan.generator.state_dict(), f"results/checkpoints/check.{i:05d}.pt")
         save_images(gan, test_noise, f"results/generated/gen.{i:04d}.png")
-        if (i+1) % 1000 == 0:
-            gan._init_encoder()
-            gan._init_dx()
-            gan._init_dz()
+        # if (i+1) % 1000 == 0:
+        #     gan._init_encoder()
+        #     gan._init_dx()
+        #     gan._init_dz()
 
         if not "encoder" in dir(gan):
             continue
