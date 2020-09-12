@@ -603,8 +603,8 @@ class AEGAN():
         self.alphas = {
             "reconstruct_image": 1,
             "reconstruct_latent": 0.5,
-            "discriminate_image": 0.01,
-            "discriminate_latent": 0.01,
+            "discriminate_image": 0.005,
+            "discriminate_latent": 0.1,
         }
         self.criterion_gen = nn.BCELoss()
         self.criterion_recon_image = nn.L1Loss()
@@ -624,20 +624,20 @@ class AEGAN():
         self.generator = self.generator.to(self.device)
         self.optim_g = optim.Adam(self.generator.parameters(),
                                   lr=2e-4, betas=(0.5, 0.999),
-                                  weight_decay=1e-6)
+                                  weight_decay=1e-8)
 
     def _init_encoder(self):
         self.encoder = Encoder(latent_dim=self.latent_dim, device=self.device)
         self.encoder = self.encoder.to(self.device)
         self.optim_e = optim.Adam(self.encoder.parameters(),
                                   lr=2e-4, betas=(0.5, 0.999),
-                                  weight_decay=1e-6)
+                                  weight_decay=1e-8)
 
     def _init_dx(self):
         self.discriminator_image = DiscriminatorImage(device=self.device).to(self.device)
         self.optim_di = optim.Adam(self.discriminator_image.parameters(),
-                                   lr=2e-4, betas=(0.5, 0.999),
-                                   weight_decay=1e-6)
+                                   lr=1e-4, betas=(0.5, 0.999),
+                                   weight_decay=1e-8)
 
     def _init_dz(self):
         self.discriminator_latent = DiscriminatorLatent(
@@ -645,8 +645,8 @@ class AEGAN():
             device=self.device,
             ).to(self.device)
         self.optim_dl = optim.Adam(self.discriminator_latent.parameters(),
-                                   lr=2e-4, betas=(0.5, 0.999),
-                                   weight_decay=1e-6)
+                                   lr=1e-4, betas=(0.5, 0.999),
+                                   weight_decay=1e-8)
 
 
 
@@ -807,7 +807,7 @@ def main():
     root = os.path.join("data")
     batch_size = 32
     latent_dim = 16
-    epochs = 5000
+    epochs = 10000
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     transform = tv.transforms.Compose([
             tv.transforms.RandomAffine(0, translate=(5/96, 5/96), fillcolor=(255,255,255)),
