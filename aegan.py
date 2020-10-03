@@ -13,23 +13,30 @@ from PIL import Image
 import numpy as np
 
 EPS = 1e-6
+ALPHA_RECONSTRUCT_IMAGE = 1
+ALPHA_RECONSTRUCT_LATENT = 0.5
+ALPHA_DISCRIMINATE_IMAGE = 0.005
+ALPHA_DISCRIMINATE_LATENT = 0.1
 
 class Generator(nn.Module):
-    def __init__(self, latent_dim=8):
-        """A generator for mapping a latent space to a sample space.
+    """A generator for mapping a latent space to a sample space.
 
-        The sample space for this generator is single-channel, 28x28 images
-        with pixel intensity ranging from -1 to +1.
+    Input shape: (?, latent_dim)
+    Output shape: (?, 3, 96, 96)
+    """
+
+    def __init__(self, latent_dim: int = 8):
+        """Initialize generator.
 
         Args:
             latent_dim (int): latent dimension ("noise vector")
-            batchnorm (bool): Whether or not to use batch normalization
         """
-        super(Generator, self).__init__()
+        super().__init__()
         self.latent_dim = latent_dim
         self._init_modules()
 
-    def build_colourspace(self, input_dim, output_dim):
+    def build_colourspace(self, input_dim: int, output_dim: int):
+        """Build a small module for selecting colours."""
         colourspace = nn.Sequential(
             nn.Linear(
                 input_dim,
@@ -57,14 +64,12 @@ class Generator(nn.Module):
         """Initialize the modules."""
         projection_widths = [8, 8, 8, 8, 8, 8, 8]
         self.projection_dim = sum(projection_widths) + self.latent_dim
-        self.leaky_relu = nn.LeakyReLU()
-        self.projections = nn.ModuleList()  # (64,)
-        running_sum = self.latent_dim
-        for i in projection_widths:
-            self.projections.append(
+        self.projection = nn.ModuleList()
+        for index, i in enumerate(projection_widths):
+            self.projection.append(
                 nn.Sequential(
                     nn.Linear(
-                        running_sum,
+                        self.latent_dim + sum(projection_widths[:index]),
                         i,
                         bias=True,
                         ),
@@ -72,119 +77,118 @@ class Generator(nn.Module):
                     nn.LeakyReLU(),
                     )
                 )
-            running_sum += i
         self.projection_upscaler = nn.Upsample(scale_factor=3)
 
-        self.colourspace_r = self.build_colourspace(self.projection_dim, 16)  # (16,)
-        self.colourspace_g = self.build_colourspace(self.projection_dim, 16)  # (16,)
-        self.colourspace_b = self.build_colourspace(self.projection_dim, 16)  # (16,)
+        self.colourspace_r = self.build_colourspace(self.projection_dim, 16)
+        self.colourspace_g = self.build_colourspace(self.projection_dim, 16)
+        self.colourspace_b = self.build_colourspace(self.projection_dim, 16)
         self.colourspace_upscaler = nn.Upsample(scale_factor=96)
 
         self.seed = nn.Sequential(
-                nn.Linear(
-                    self.projection_dim,
-                    512*3*3,
-                    bias=True),
-                nn.BatchNorm1d(512*3*3),
-                nn.LeakyReLU(),
-                )
+            nn.Linear(
+                self.projection_dim,
+                512*3*3,
+                bias=True),
+            nn.BatchNorm1d(512*3*3),
+            nn.LeakyReLU(),
+            )
 
         self.upscaling = nn.ModuleList()
         self.conv = nn.ModuleList()
 
         self.upscaling.append(nn.Upsample(scale_factor=2))
         self.conv.append(nn.Sequential(
-                nn.ZeroPad2d((1, 1, 1, 1)),
-                nn.Conv2d(
-                        in_channels=(512)//4,
-                        out_channels=512,
-                        kernel_size=3,
-                        stride=1,
-                        padding=0,
-                        bias=True
-                        ),
-                nn.BatchNorm2d(512),
-                nn.LeakyReLU(),
-                ))
+            nn.ZeroPad2d((1, 1, 1, 1)),
+            nn.Conv2d(
+                in_channels=(512)//4,
+                out_channels=512,
+                kernel_size=3,
+                stride=1,
+                padding=0,
+                bias=True
+                ),
+            nn.BatchNorm2d(512),
+            nn.LeakyReLU(),
+            ))
 
         self.upscaling.append(nn.Upsample(scale_factor=2))
         self.conv.append(nn.Sequential(
-                nn.ZeroPad2d((1, 2, 1, 2)),
-                nn.Conv2d(
-                        in_channels=(512 + self.projection_dim)//4,
-                        out_channels=256,
-                        kernel_size=4,
-                        stride=1,
-                        padding=0,
-                        bias=True
-                        ),
-                nn.BatchNorm2d(256),
-                nn.LeakyReLU(),
-                ))
+            nn.ZeroPad2d((1, 2, 1, 2)),
+            nn.Conv2d(
+                in_channels=(512 + self.projection_dim)//4,
+                out_channels=256,
+                kernel_size=4,
+                stride=1,
+                padding=0,
+                bias=True
+                ),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(),
+            ))
 
         self.upscaling.append(nn.Upsample(scale_factor=2))
         self.conv.append(nn.Sequential(
-                nn.ZeroPad2d((1, 2, 1, 2)),
-                nn.Conv2d(
-                        in_channels=(256 + self.projection_dim)//4,
-                        out_channels=256,
-                        kernel_size=4,
-                        stride=1,
-                        padding=0,
-                        bias=True
-                        ),
-                nn.BatchNorm2d(256),
-                nn.LeakyReLU(),
-                ))
+            nn.ZeroPad2d((1, 2, 1, 2)),
+            nn.Conv2d(
+                in_channels=(256 + self.projection_dim)//4,
+                out_channels=256,
+                kernel_size=4,
+                stride=1,
+                padding=0,
+                bias=True
+                ),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(),
+            ))
 
         self.upscaling.append(nn.Upsample(scale_factor=2))
         self.conv.append(nn.Sequential(
-                nn.ZeroPad2d((1, 2, 1, 2)),
-                nn.Conv2d(
-                        in_channels=(256 + self.projection_dim)//4,
-                        out_channels=256,
-                        kernel_size=4,
-                        stride=1,
-                        padding=0,
-                        bias=True
-                        ),
-                nn.BatchNorm2d(256),
-                nn.LeakyReLU(),
-                )),
+            nn.ZeroPad2d((1, 2, 1, 2)),
+            nn.Conv2d(
+                in_channels=(256 + self.projection_dim)//4,
+                out_channels=256,
+                kernel_size=4,
+                stride=1,
+                padding=0,
+                bias=True
+                ),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(),
+            )),
 
         self.upscaling.append(nn.Upsample(scale_factor=2))
         self.conv.append(nn.Sequential(
-                nn.ZeroPad2d((1, 2, 1, 2)),
-                nn.Conv2d(
-                        in_channels=(256 + self.projection_dim)//4,
-                        out_channels=64,
-                        kernel_size=4,
-                        stride=1,
-                        padding=0,
-                        bias=True
-                        ),
-                nn.BatchNorm2d(64),
-                nn.LeakyReLU(),
-                ))
+            nn.ZeroPad2d((1, 2, 1, 2)),
+            nn.Conv2d(
+                in_channels=(256 + self.projection_dim)//4,
+                out_channels=64,
+                kernel_size=4,
+                stride=1,
+                padding=0,
+                bias=True
+                ),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(),
+            ))
 
         self.upscaling.append(nn.Upsample(scale_factor=1))
         self.conv.append(nn.Sequential(
-                nn.ZeroPad2d((2, 2, 2, 2)),
-                nn.Conv2d(
-                        in_channels=64,
-                        out_channels=16,
-                        kernel_size=5,
-                        stride=1,
-                        padding=0,
-                        bias=True
-                        ),
-                nn.Softmax(dim=1),
-                ))
+            nn.ZeroPad2d((2, 2, 2, 2)),
+            nn.Conv2d(
+                in_channels=64,
+                out_channels=16,
+                kernel_size=5,
+                stride=1,
+                padding=0,
+                bias=True
+                ),
+            nn.Softmax(dim=1),
+            ))
 
     def forward(self, input_tensor):
         """Forward pass; map latent vectors to samples."""
         last = input_tensor
-        for module in self.projections:
+        for module in self.projection:
             projection = module(last)
             last = torch.cat((last, projection), -1)
         projection = last
@@ -227,9 +231,20 @@ class Generator(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, device="cpu", latent_dim=8):
-        """An Encoder for encoding images as latent vectors."""
-        super(Encoder, self).__init__()
+    """An Encoder for encoding images as latent vectors.
+
+    Input shape: (?, 3, 96, 96)
+    Output shape: (?, latent_dim)
+    """
+
+    def __init__(self, device: str = "cpu", latent_dim: int = 8):
+        """Initialize encoder.
+
+        Args:
+            device: chich GPU or CPU to use.
+            latent_dim: output dimension
+        """
+        super().__init__()
         self.device = device
         self.latent_dim = latent_dim
         self._init_modules()
@@ -263,9 +278,9 @@ class Encoder(nn.Module):
                 padding=1,
                 bias=True,
                 ),
-                nn.BatchNorm2d(down_channels[-2]),
-                nn.LeakyReLU(),
-                nn.Upsample(scale_factor=2)
+            nn.BatchNorm2d(down_channels[-2]),
+            nn.LeakyReLU(),
+            nn.Upsample(scale_factor=2)
             )
 
         up_channels = [256, 128, 64, 64, 64]
@@ -361,9 +376,15 @@ class Encoder(nn.Module):
 
 
 class DiscriminatorImage(nn.Module):
+    """A discriminator for discerning real from generated images.
+
+    Input shape: (?, 3, 96, 96)
+    Output shape: (?, 1)
+    """
+
     def __init__(self, device="cpu"):
-        """A discriminator for discerning real from generated images."""
-        super(DiscriminatorImage, self).__init__()
+        """Initialize the discriminator."""
+        super().__init__()
         self.device = device
         self._init_modules()
 
@@ -409,31 +430,37 @@ class DiscriminatorImage(nn.Module):
 
 
 class DiscriminatorLatent(nn.Module):
+    """A discriminator for discerning real from generated vectors.
+
+    Input shape: (?, latent_dim)
+    Output shape: (?, 1)
+    """
+
     def __init__(self, latent_dim=8, device="cpu"):
-        """A discriminator for discerning real from generated images."""
-        super(DiscriminatorLatent, self).__init__()
+        """Initialize the Discriminator."""
+        super().__init__()
         self.latent_dim = latent_dim
         self.device = device
         self._init_modules()
 
-    def _init_modules(self):
+    def _init_modules(self, depth=7, width=8):
         """Initialize the modules."""
         self.pyramid = nn.ModuleList()
-        for i in range(7):
+        for i in range(depth):
             self.pyramid.append(
                 nn.Sequential(
                     nn.Linear(
-                        self.latent_dim + 8*i,
-                        8,
+                        self.latent_dim + width*i,
+                        width,
                         bias=True,
                         ),
-                    nn.BatchNorm1d(8),
+                    nn.BatchNorm1d(width),
                     nn.LeakyReLU(),
                     )
                 )
 
         self.classifier = nn.ModuleList()
-        self.classifier.append(nn.Linear(7*8 + self.latent_dim, 1))
+        self.classifier.append(nn.Linear(depth*width + self.latent_dim, 1))
         self.classifier.append(nn.Sigmoid())
 
     def forward(self, input_tensor):
@@ -449,166 +476,29 @@ class DiscriminatorLatent(nn.Module):
         return last
 
 
-class GAN():
-    def __init__(self, latent_dim, noise_fn, dataloader,
-                 batch_size=32, device='cpu', gen_path=None):
-        """A very basic DCGAN class for generating MNIST digits
-
-        Args:
-            generator: a Ganerator network
-            discriminator: A Discriminator network
-            noise_fn: function f(num: int) -> pytorch tensor, (latent vectors)
-            dataloader: a pytorch dataloader for loading images
-            batch_size: training batch size. Must match that of dataloader
-            device: cpu or CUDA
-            lr_d: learning rate for the discriminator
-            lr_g: learning rate for the generator
-        """
-        self.latent_dim = latent_dim
-        self.device = device
-
-        self.generator = Generator(latent_dim=self.latent_dim).to(device)
-        if gen_path:
-            self.generator.load_state_dict(torch.load(gen_path))
-        self.generator = self.generator.to(self.device)
-        self.discriminator_image = DiscriminatorImage(device=self.device).to(device)
-
-        self.noise_fn = noise_fn
-        self.dataloader = dataloader
-        self.batch_size = batch_size
-
-        self.criterion = nn.BCELoss()
-        self.optim_di = optim.Adam(
-            self.discriminator_image.parameters(),
-            lr=2e-4,
-            betas=(0.5, 0.999),
-            weight_decay=1e-6,
-            )
-        self.optim_g = optim.Adam(
-            self.generator.parameters(),
-            lr=1e-4,
-            betas=(0.5, 0.999),
-            weight_decay=1e-6,
-            )
-        self.target_ones = torch.ones((batch_size, 1), device=device)
-        self.target_zeros = torch.zeros((batch_size, 1), device=device)
-
-    def generate_samples(self, latent_vec=None, num=None):
-        """Sample images from the generator.
-
-        Images are returned as a 4D tensor of values between -1 and 1.
-        Dimensions are (number, channels, height, width). Returns the tensor
-        on cpu.
-
-        Args:
-            latent_vec: A pytorch latent vector or None
-            num: The number of samples to generate if latent_vec is None
-
-        If latent_vec and num are None then use self.batch_size
-        random latent vectors.
-        """
-        num = self.batch_size if num is None else num
-        latent_vec = self.noise_fn(num) if latent_vec is None else latent_vec
-        with torch.no_grad():
-            samples = self.generator(latent_vec)
-        samples = samples.cpu()
-        return samples
-
-    def train_step_generator(self):
-        """Train the generator one step and return the loss."""
-        self.generator.zero_grad()
-
-        latent_vec = self.noise_fn(self.batch_size)
-        generated = self.generator(latent_vec)
-        classifications = self.discriminator_image(generated)
-        loss = self.criterion(classifications, self.target_ones)
-        loss.backward()
-        self.optim_g.step()
-        return loss.item()
-
-    def train_step_discriminator(self, real_samples):
-        """Train the discriminator one step and return the losses."""
-        self.discriminator_image.zero_grad()
-
-        # real samples
-        pred_real = self.discriminator_image(real_samples)
-        loss_real = self.criterion(pred_real, self.target_ones)
-
-        # generated samples
-        latent_vec = self.noise_fn(self.batch_size)
-        with torch.no_grad():
-            fake_samples = self.generator(latent_vec)
-        pred_fake = self.discriminator_image(fake_samples)
-        loss_fake = self.criterion(pred_fake, self.target_zeros)
-
-        # combine
-        loss = (loss_real + loss_fake) / 2
-        loss.backward()
-        self.optim_di.step()
-        return loss_real.item(), loss_fake.item()
-
-    def train_epoch(self, print_frequency=10, max_steps=0):
-        """Train both networks for one epoch and return the losses.
-
-        Args:
-            print_frequency (int): print stats every `print_frequency` steps.
-            max_steps (int): End epoch after `max_steps` steps, or set to 0
-                             to do the full epoch.
-        """
-        loss_g_running, loss_d_real_running, loss_d_fake_running = 0, 0, 0
-        for batch, (real_samples, _) in enumerate(self.dataloader):
-            real_samples = real_samples.to(self.device)
-            ldr_, ldf_ = self.train_step_discriminator(real_samples)
-            loss_d_real_running += ldr_
-            loss_d_fake_running += ldf_
-            loss_g_running += self.train_step_generator()
-            if print_frequency and (batch+1) % print_frequency == 0:
-                print(f"{batch+1}/{len(self.dataloader)}:"
-                      f" G={loss_g_running / (batch+1):.3f},"
-                      f" Dr={loss_d_real_running / (batch+1):.3f},"
-                      f" Df={loss_d_fake_running / (batch+1):.3f}",
-                      end='\r',
-                      flush=True)
-            if max_steps and batch == max_steps:
-                break
-        if print_frequency:
-            print()
-        loss_g_running /= batch
-        loss_d_real_running /= batch
-        loss_d_fake_running /= batch
-        return (loss_g_running, (loss_d_real_running, loss_d_fake_running))
-
 class AEGAN():
+    """An Autoencoder Generative Adversarial Network for making pokemon."""
+
     def __init__(self, latent_dim, noise_fn, dataloader,
-                 batch_size=32, device='cpu', gen_path=None):
-        """A very basic DCGAN class for generating MNIST digits
+                 batch_size=32, device='cpu'):
+        """Initialize the AEGAN.
 
         Args:
-            generator: a Ganerator network
-            discriminator: A Discriminator network
+            latent_dim: latent-space dimension. Must be divisible by 4.
             noise_fn: function f(num: int) -> pytorch tensor, (latent vectors)
             dataloader: a pytorch dataloader for loading images
             batch_size: training batch size. Must match that of dataloader
             device: cpu or CUDA
-            lr_d: learning rate for the discriminator
-            lr_g: learning rate for the generator
         """
+        assert latent_dim % 4 == 0
         self.latent_dim = latent_dim
         self.device = device
-        self.gen_path = gen_path
         self.noise_fn = noise_fn
         self.dataloader = dataloader
         self.batch_size = batch_size
 
-        self.alphas = {
-            "reconstruct_image": 1,
-            "reconstruct_latent": 0.5,
-            "discriminate_image": 0.005,
-            "discriminate_latent": 0.1,
-        }
         self.criterion_gen = nn.BCELoss()
         self.criterion_recon_image = nn.L1Loss()
-        #self.criterion_recon_image = nn.MSELoss()
         self.criterion_recon_latent = nn.MSELoss()
         self.target_ones = torch.ones((batch_size, 1), device=device)
         self.target_zeros = torch.zeros((batch_size, 1), device=device)
@@ -619,8 +509,6 @@ class AEGAN():
 
     def _init_generator(self):
         self.generator = Generator(latent_dim=self.latent_dim)
-        if self.gen_path:
-            self.generator.load_state_dict(torch.load(self.gen_path))
         self.generator = self.generator.to(self.device)
         self.optim_g = optim.Adam(self.generator.parameters(),
                                   lr=2e-4, betas=(0.5, 0.999),
@@ -647,10 +535,6 @@ class AEGAN():
         self.optim_dl = optim.Adam(self.discriminator_latent.parameters(),
                                    lr=1e-4, betas=(0.5, 0.999),
                                    weight_decay=1e-8)
-
-
-
-
 
 
     def generate_samples(self, latent_vec=None, num=None):
@@ -696,11 +580,11 @@ class AEGAN():
         X_tilde_loss = self.criterion_gen(X_tilde_confidence, self.target_ones)
         Z_tilde_loss = self.criterion_gen(Z_tilde_confidence, self.target_ones)
 
-        X_recon_loss = self.criterion_recon_image(X_tilde, X) * self.alphas["reconstruct_image"]
-        Z_recon_loss = self.criterion_recon_latent(Z_tilde, Z) * self.alphas["reconstruct_latent"]
+        X_recon_loss = self.criterion_recon_image(X_tilde, X) * ALPHA_RECONSTRUCT_IMAGE
+        Z_recon_loss = self.criterion_recon_latent(Z_tilde, Z) * ALPHA_RECONSTRUCT_LATENT
 
-        X_loss = (X_hat_loss + X_tilde_loss) / 2 * self.alphas["discriminate_image"]
-        Z_loss = (Z_hat_loss + Z_tilde_loss) / 2 * self.alphas["discriminate_latent"]
+        X_loss = (X_hat_loss + X_tilde_loss) / 2 * ALPHA_DISCRIMINATE_IMAGE
+        Z_loss = (Z_hat_loss + Z_tilde_loss) / 2 * ALPHA_DISCRIMINATE_LATENT
         loss = X_loss + Z_loss + X_recon_loss + Z_recon_loss
 
         loss.backward()
@@ -768,12 +652,12 @@ class AEGAN():
             lrz += lrz_
             if print_frequency and (batch+1) % print_frequency == 0:
                 print(f"{batch+1}/{len(self.dataloader)}:"
-                      f" G={lgx / (eps + (batch+1) * self.alphas['discriminate_image']):.3f},"
-                      f" E={lgz / (eps + (batch+1) * self.alphas['discriminate_latent']):.3f},"
+                      f" G={lgx / (eps + (batch+1) * ALPHA_DISCRIMINATE_IMAGE):.3f},"
+                      f" E={lgz / (eps + (batch+1) * ALPHA_DISCRIMINATE_LATENT):.3f},"
                       f" Dx={ldx / (eps + (batch+1)):.3f},"
                       f" Dz={ldz / (eps + (batch+1)):.3f}",
-                      f" Rx={lrx / (eps + (batch+1) * self.alphas['reconstruct_image']):.3f}",
-                      f" Rz={lrz / (eps + (batch+1) * self.alphas['reconstruct_latent']):.3f}",
+                      f" Rx={lrx / (eps + (batch+1) * ALPHA_RECONSTRUCT_IMAGE):.3f}",
+                      f" Rz={lrz / (eps + (batch+1) * ALPHA_RECONSTRUCT_LATENT):.3f}",
                       end='\r',
                       flush=True)
             if max_steps and batch == max_steps:
@@ -787,106 +671,3 @@ class AEGAN():
         lrx /= batch
         lrz /= batch
         return lgx, lgz, ldx, ldz, lrx, lrz
-
-
-def save_images(GAN, vec, filename):
-    images = GAN.generate_samples(vec)
-    ims = tv.utils.make_grid(images, normalize=True)
-    ims = ims.numpy().transpose((1,2,0))
-    ims = np.array(ims*255, dtype=np.uint8)
-    image = Image.fromarray(ims)
-    image.save(filename)
-
-
-def main():
-    import matplotlib.pyplot as plt
-    os.makedirs("results/generated", exist_ok=True)
-    os.makedirs("results/reconstructed", exist_ok=True)
-    os.makedirs("results/checkpoints", exist_ok=True)
-
-    root = os.path.join("data")
-    batch_size = 32
-    latent_dim = 16
-    epochs = 10000
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    transform = tv.transforms.Compose([
-            tv.transforms.RandomAffine(0, translate=(5/96, 5/96), fillcolor=(255,255,255)),
-            tv.transforms.ColorJitter(hue=0.5),
-            tv.transforms.RandomHorizontalFlip(p=0.5),
-            tv.transforms.ToTensor(),
-            tv.transforms.Normalize((0.5, 0.5, 0.5,), (0.5, 0.5, 0.5,))
-            ])
-    dataset = ImageFolder(
-            root=root,
-            transform=transform
-            )
-    dataloader = DataLoader(dataset,
-            batch_size=batch_size,
-            shuffle=True,
-            num_workers=8,
-            drop_last=True
-            )
-    X = iter(dataloader)
-    test_ims, _ = next(X)
-    test_ims_show = tv.utils.make_grid(test_ims, normalize=True)
-    test_ims_show = test_ims_show.numpy().transpose((1,2,0))
-    test_ims_show = np.array(test_ims_show*255, dtype=np.uint8)
-    image = Image.fromarray(test_ims_show)
-    image.save("results/reconstructed/test_images.png")
-
-    noise_fn = lambda x: torch.randn((x, latent_dim), device=device)
-    test_noise = noise_fn(32)
-    gen_path = None
-    if len(sys.argv) > 1:
-        gen_path = sys.argv[1]
-        print(f"loading generator {gen_path}")
-    gan = AEGAN(
-        latent_dim,
-        noise_fn,
-        dataloader,
-        device=device,
-        batch_size=batch_size,
-        gen_path=gen_path,
-        )
-    start = time.time()
-    for i in range(epochs):
-        while True:
-            try:
-                with open("pause.json") as f:
-                    pause = json.load(f)
-                if pause['pause'] == 0:
-                    break
-                print(f"Pausing for {pause['pause']} seconds")
-                time.sleep(pause["pause"])
-            except (KeyError, json.decoder.JSONDecodeError, FileNotFoundError):
-                break
-        elapsed = int(time.time() - start)
-        elapsed = f"{elapsed // 3600:02d}:{(elapsed % 3600) // 60:02d}:{elapsed % 60:02d}"
-        print(f"Epoch {i+1}; Elapsed time = {elapsed}s")
-        gan.train_epoch(max_steps=100)
-        if (i + 1) % 50 == 0:
-            torch.save(gan.generator.state_dict(), f"results/checkpoints/check.{i:05d}.pt")
-        save_images(gan, test_noise, f"results/generated/gen.{i:04d}.png")
-        # if (i+1) % 1000 == 0:
-        #     gan._init_encoder()
-        #     gan._init_dx()
-        #     gan._init_dz()
-
-        if not "encoder" in dir(gan):
-            continue
-        with torch.no_grad():
-            reconstructed = gan.generator(gan.encoder(test_ims.cuda())).cpu()
-        reconstructed = tv.utils.make_grid(reconstructed, normalize=True)
-        reconstructed = reconstructed.numpy().transpose((1,2,0))
-        reconstructed = np.array(reconstructed*255, dtype=np.uint8)
-        reconstructed = Image.fromarray(reconstructed)
-        reconstructed.save(f"results/reconstructed/gen.{i:04d}.png")
-
-    images = gan.generate_samples()
-    ims = tv.utils.make_grid(images, normalize=True)
-    plt.imshow(ims.numpy().transpose((1,2,0)))
-    plt.show()
-
-
-if __name__ == "__main__":
-    main()
