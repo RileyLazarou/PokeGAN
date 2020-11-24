@@ -18,11 +18,11 @@ from aegan import AEGAN
 
 BATCH_SIZE = 32
 LATENT_DIM = 16
-EPOCHS = 10000
+EPOCHS = 20000
 
 def save_images(GAN, vec, filename):
     images = GAN.generate_samples(vec)
-    ims = tv.utils.make_grid(images, normalize=True)
+    ims = tv.utils.make_grid(images[:36], normalize=True, nrow=6,)
     ims = ims.numpy().transpose((1,2,0))
     ims = np.array(ims*255, dtype=np.uint8)
     image = Image.fromarray(ims)
@@ -54,15 +54,17 @@ def main():
             drop_last=True
             )
     X = iter(dataloader)
-    test_ims, _ = next(X)
-    test_ims_show = tv.utils.make_grid(test_ims, normalize=True)
+    test_ims1, _ = next(X)
+    test_ims2, _ = next(X)
+    test_ims = torch.cat((test_ims1, test_ims2), 0)
+    test_ims_show = tv.utils.make_grid(test_ims[:36], normalize=True, nrow=6,)
     test_ims_show = test_ims_show.numpy().transpose((1,2,0))
     test_ims_show = np.array(test_ims_show*255, dtype=np.uint8)
     image = Image.fromarray(test_ims_show)
     image.save("results/reconstructed/test_images.png")
 
     noise_fn = lambda x: torch.randn((x, LATENT_DIM), device=device)
-    test_noise = noise_fn(32)
+    test_noise = noise_fn(36)
     gan = AEGAN(
         LATENT_DIM,
         noise_fn,
@@ -95,7 +97,7 @@ def main():
 
         with torch.no_grad():
             reconstructed = gan.generator(gan.encoder(test_ims.cuda())).cpu()
-        reconstructed = tv.utils.make_grid(reconstructed, normalize=True)
+        reconstructed = tv.utils.make_grid(reconstructed[:36], normalize=True, nrow=6,)
         reconstructed = reconstructed.numpy().transpose((1,2,0))
         reconstructed = np.array(reconstructed*255, dtype=np.uint8)
         reconstructed = Image.fromarray(reconstructed)
