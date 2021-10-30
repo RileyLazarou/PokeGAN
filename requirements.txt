@@ -8,5 +8,7 @@ Pillow==8.3.2
 pyparsing==2.4.7
 python-dateutil==2.8.1
 six==1.15.0
-torch==1.6.0
-torchvision==0.7.0
+torch==1.10.0+cu113
+torchaudio==0.10.0+cu113
+torchvision==0.11.1+cu113
+typing-extensions==3.10.0.2

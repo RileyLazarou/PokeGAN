@@ -25,7 +25,7 @@ class Generator(nn.Module):
     Output shape: (?, 3, 96, 96)
     """
 
-    def __init__(self, latent_dim: int = 8):
+    def __init__(self, latent_dim: int = 16):
         """Initialize generator.
 
         Args:
