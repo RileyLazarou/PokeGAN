@@ -129,3 +129,4 @@ dmypy.json
 .pyre/
 
 results/
+data/sprites_rgb/*.png

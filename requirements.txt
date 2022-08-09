@@ -3,12 +3,10 @@ cycler==0.10.0
 future==0.18.2
 kiwisolver==1.2.0
 matplotlib==3.3.1
-numpy==1.19.1
-Pillow==8.3.2
 pyparsing==2.4.7
 python-dateutil==2.8.1
 six==1.15.0
-torch==1.10.0+cu113
-torchaudio==0.10.0+cu113
-torchvision==0.11.1+cu113
+torch==1.10.0
+torchaudio==0.10.0
+torchvision==0.11.1
 typing-extensions==3.10.0.2
